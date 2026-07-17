@@ -36,8 +36,15 @@
   button.primary:disabled{opacity:.55;cursor:default;}
   button.ghost{background:transparent;border:none;color:var(--accent);
                padding:4px 2px;font-size:12px;}
+  .tabs{display:flex;gap:0;margin:0 0 -1px;}
+  .tabs button{flex:1;border-radius:8px 8px 0 0;border:1px solid var(--line);
+        border-bottom:none;background:var(--paper);color:var(--muted);
+        padding:8px 4px;font-size:12px;}
+  .tabs button.active{background:var(--card);color:var(--accent);font-weight:600;}
+  .tabs button .tag{display:block;font-size:10px;font-weight:400;color:var(--muted);}
   .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
         margin:0 0 12px;overflow:hidden;}
+  .card.tabbed{border-radius:0 0 8px 8px;}
   .card h3{margin:0;padding:9px 12px;font-size:12px;font-weight:600;
            background:var(--accent-soft);color:var(--accent);
            display:flex;align-items:center;}
@@ -72,9 +79,6 @@
     style="border:none;background:none;font-size:14px;cursor:pointer;padding:0 0 0 8px;line-height:1">&#9789;</button>
 </header>
 <main>
-  <p class="hint">Polishes what you wrote. Signature, footer, and the quoted
-     thread stay untouched and are never sent to the API.</p>
-
   <button class="primary" id="go">Polish my draft</button>
   <div class="status" id="status"></div>
 
@@ -105,9 +109,7 @@
       <option value="off">Off - polish message by message only</option>
     </select>
     <p class="hint" style="margin:6px 0 0">
-      <span id="sampleCount"></span><br>
-      Only replies you accept are kept - your words, never the thread.
-      Stored on this machine only, never exported.
+      <span id="sampleCount"></span>
       <button class="ghost" id="clearSamples" type="button">Clear now</button>
     </p>
 
@@ -117,9 +119,6 @@
       <button id="importP">Import profile</button>
     </div>
     <input type="file" id="importFile" accept=".json" style="display:none">
-    <p class="hint" style="margin-top:10px">Export saves a
-       <span style="font-family:var(--mono)">betterreply-profile.json</span>
-       (style rules, signature marker, model &mdash; never your API key).</p>
   </details>
 </main>
 
@@ -310,7 +309,7 @@ async function polish(draft, threadContext){
   return [parts[0].trim(), parts[1].trim()];
 }
 
-/* ---------- results UI ---------- */
+/* ---------- results UI (tabbed) ---------- */
 function showOptions(opt1, opt2, cutPos, fullText){
   const box = $("results");
   box.innerHTML = "";
@@ -318,26 +317,45 @@ function showOptions(opt1, opt2, cutPos, fullText){
     {label:"Option 1", tag:"minimal cleanup", text:opt1},
     {label:"Option 2", tag:"more polished",   text:opt2}
   ];
-  for(const d of defs){
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML =
-      '<h3>' + d.label + '<span class="tag">' + d.tag + '</span></h3>' +
-      '<div class="body"></div>' +
-      '<div class="actions">' +
-        '<button class="use primary">Use this</button>' +
-        '<button class="copy">Copy</button>' +
-      '</div>';
-    card.querySelector(".body").textContent = d.text;
-    card.querySelector(".use").addEventListener("click",
-      () => useOption(d.text, cutPos, fullText));
-    card.querySelector(".copy").addEventListener("click", async ev => {
-      await navigator.clipboard.writeText(d.text);
-      ev.target.textContent = "Copied";
-      setTimeout(() => ev.target.textContent = "Copy", 1200);
-    });
-    box.appendChild(card);
+
+  const tabs = document.createElement("div");
+  tabs.className = "tabs";
+  const card = document.createElement("div");
+  card.className = "card tabbed";
+  card.innerHTML =
+    '<div class="body"></div>' +
+    '<div class="actions">' +
+      '<button class="use primary">Use this</button>' +
+      '<button class="copy">Copy</button>' +
+    '</div>';
+
+  let current = 0;
+  const tabBtns = defs.map((d, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = d.label + '<span class="tag">' + d.tag + '</span>';
+    b.addEventListener("click", () => select(i));
+    tabs.appendChild(b);
+    return b;
+  });
+
+  function select(i){
+    current = i;
+    tabBtns.forEach((b, j) => b.classList.toggle("active", j === i));
+    card.querySelector(".body").textContent = defs[i].text;
   }
+
+  card.querySelector(".use").addEventListener("click",
+    () => useOption(defs[current].text, cutPos, fullText));
+  card.querySelector(".copy").addEventListener("click", async ev => {
+    await navigator.clipboard.writeText(defs[current].text);
+    ev.target.textContent = "Copied";
+    setTimeout(() => ev.target.textContent = "Copy", 1200);
+  });
+
+  box.appendChild(tabs);
+  box.appendChild(card);
+  select(0);
 }
 
 function useOption(text, cutPos, fullText){
@@ -378,7 +396,7 @@ async function run(){
 
     setStatus("Polishing\u2026", false, true);
     const [o1, o2] = await polish(draft, context);
-    setStatus("Pick a version, or keep yours by doing nothing.");
+    setStatus("");
     showOptions(o1, o2, cut, full);
   }catch(e){
     setStatus(e.message, true);
@@ -405,13 +423,4 @@ Office.onReady(() => {
   $("theme").addEventListener("click", toggleTheme);
   if(!localStorage.getItem(LS.key)) $("settings").open = true;
   $("go").addEventListener("click", run);
-  $("save").addEventListener("click", saveSettings);
-  $("exportP").addEventListener("click", exportProfile);
-  $("importP").addEventListener("click", () => $("importFile").click());
-  $("importFile").addEventListener("change",
-    ev => ev.target.files[0] && importProfile(ev.target.files[0]));
-  $("clearSamples").addEventListener("click", clearSamples);
-});
-</script>
-</body>
-</html>
+  $("save").addEventListener("c
