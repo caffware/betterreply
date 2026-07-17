@@ -11,6 +11,14 @@
     --accent:#0f6b54; --accent-soft:#e3f0ec; --muted:#66707d;
     --warn:#9a4b00; --mono:"Cascadia Code","Consolas",monospace;
   }
+  body.dark{
+    --ink:#e4e8ec; --paper:#181c21; --card:#22272e; --line:#39414b;
+    --accent:#3dbf9a; --accent-soft:#1d3a32; --muted:#98a2ad;
+    --warn:#ffb26b;
+  }
+  body.dark input, body.dark textarea, body.dark select{color:var(--ink);}
+  body.dark button{color:var(--ink);}
+  body.dark button.primary{color:#0e1512;}
   *{box-sizing:border-box}
   body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;
        color:var(--ink);background:var(--paper);}
@@ -60,6 +68,8 @@
 <header>
   <h1>BetterReply</h1>
   <span class="brand">caffware</span>
+  <button id="theme" title="Toggle dark mode"
+    style="border:none;background:none;font-size:14px;cursor:pointer;padding:0 0 0 8px;line-height:1">&#9789;</button>
 </header>
 <main>
   <p class="hint">Polishes what you wrote. Signature, footer, and the quoted
@@ -89,6 +99,18 @@
     <textarea id="rules"
       placeholder="e.g. Never use em-dashes. Keep replies under 5 sentences. Sign off with Best."></textarea>
 
+    <label for="learn" style="margin-top:14px">Style memory</label>
+    <select id="learn">
+      <option value="on">On - keep my chosen replies 30 days as style reference</option>
+      <option value="off">Off - polish message by message only</option>
+    </select>
+    <p class="hint" style="margin:6px 0 0">
+      <span id="sampleCount"></span><br>
+      Only replies you accept are kept - your words, never the thread.
+      Stored on this machine only, never exported.
+      <button class="ghost" id="clearSamples" type="button">Clear now</button>
+    </p>
+
     <div class="row">
       <button id="save">Save settings</button>
       <button id="exportP">Export profile</button>
@@ -97,8 +119,7 @@
     <input type="file" id="importFile" accept=".json" style="display:none">
     <p class="hint" style="margin-top:10px">Export saves a
        <span style="font-family:var(--mono)">betterreply-profile.json</span>
-       (style rules, signature marker, model &mdash; never your API key).
-       Keep it in OneDrive and import it on any machine.</p>
+       (style rules, signature marker, model &mdash; never your API key).</p>
   </details>
 </main>
 
@@ -109,20 +130,27 @@ const LS = {
   key:  "br.apiKey",
   model:"br.model",
   sig:  "br.sigMarker",
-  rules:"br.styleRules"
+  rules:"br.styleRules",
+  samples:"br.styleSamples",   // recent chosen outputs (your words only)
+  learn:  "br.learnStyle",
+  theme:  "br.theme"
 };
+const SAMPLE_DAYS = 30, SAMPLE_MAX = 20, SAMPLE_USE = 4;
 
 function loadSettings(){
   $("key").value   = localStorage.getItem(LS.key)   || "";
   $("model").value = localStorage.getItem(LS.model) || "gpt-4o";
   $("sig").value   = localStorage.getItem(LS.sig)   || "";
   $("rules").value = localStorage.getItem(LS.rules) || "";
+  $("learn").value = localStorage.getItem(LS.learn) || "on";
+  updateSampleCount();
 }
 function saveSettings(){
   localStorage.setItem(LS.key,   $("key").value.trim());
   localStorage.setItem(LS.model, $("model").value);
   localStorage.setItem(LS.sig,   $("sig").value.trim());
   localStorage.setItem(LS.rules, $("rules").value.trim());
+  localStorage.setItem(LS.learn, $("learn").value);
   setStatus("Settings saved.");
 }
 
@@ -159,6 +187,45 @@ function importProfile(file){
     }
   };
   r.readAsText(file);
+}
+
+/* ---------- style memory (your words only, 30-day rolling) ---------- */
+function loadSamples(){
+  let arr = [];
+  try{ arr = JSON.parse(localStorage.getItem(LS.samples) || "[]"); }catch(e){}
+  const cutoff = Date.now() - SAMPLE_DAYS*24*60*60*1000;
+  arr = arr.filter(s => s.ts > cutoff);
+  localStorage.setItem(LS.samples, JSON.stringify(arr));
+  return arr;
+}
+function addSample(text){
+  if(localStorage.getItem(LS.learn) === "off") return;
+  const arr = loadSamples();
+  arr.push({ts: Date.now(), text: text.slice(0, 1200)});
+  while(arr.length > SAMPLE_MAX) arr.shift();
+  localStorage.setItem(LS.samples, JSON.stringify(arr));
+  updateSampleCount();
+}
+function clearSamples(){
+  localStorage.removeItem(LS.samples);
+  updateSampleCount();
+  setStatus("Style memory cleared.");
+}
+function updateSampleCount(){
+  const n = loadSamples().length;
+  const el = $("sampleCount");
+  if(el) el.textContent = n
+    ? n + " sample" + (n>1?"s":"") + " from the last " + SAMPLE_DAYS + " days"
+    : "Nothing stored yet - your drafts are added automatically when you polish.";
+}
+function styleReference(){
+  if(localStorage.getItem(LS.learn) === "off") return "";
+  const arr = loadSamples();
+  if(!arr.length) return "";
+  const recent = arr.slice(-SAMPLE_USE)
+    .map((s,i) => "Example " + (i+1) + ":\n" + s.text).join("\n---\n");
+  return "Recent emails this writer sent, as style reference only - " +
+         "match their voice, never reuse their content:\n" + recent + "\n\n";
 }
 
 /* ---------- status ---------- */
@@ -206,6 +273,7 @@ async function polish(draft, threadContext){
     "of your output entirely. The quoted thread, if provided, is context " +
     "ONLY - never rewrite, quote, or include it. " +
     (rules ? "The writer's standing style rules, follow them strictly: " + rules + " " : "") +
+    styleReference() +
     "Return exactly two versions of the draft separated by the line " +
     "===OPTION2=== on its own line. Version 1: minimal cleanup. Version 2: " +
     "slightly more polished. Return ONLY the email text - no preamble, no " +
@@ -279,6 +347,7 @@ function useOption(text, cutPos, fullText){
   Office.context.mailbox.item.body.setAsync(
     newBody, {coercionType: Office.CoercionType.Text}, res => {
       if(res.status === Office.AsyncResultStatus.Succeeded){
+        addSample(text);
         setStatus("Swapped in. Review and send.");
         $("results").innerHTML = "";
       }else{
@@ -301,6 +370,7 @@ async function run(){
     const draft = full.slice(0, cut).trim();
     if(draft.length < 5)
       throw new Error("Draft looks empty - write something first.");
+    addSample(draft);  // your own words, captured automatically
     const thread = full.slice(cut);
     const threadStart = Math.max(thread.indexOf("From: "),
                                  thread.indexOf("-----Original Message-----"));
@@ -318,8 +388,21 @@ async function run(){
 }
 
 /* ---------- boot ---------- */
+function applyTheme(){
+  const dark = localStorage.getItem(LS.theme) === "dark";
+  document.body.classList.toggle("dark", dark);
+  $("theme").innerHTML = dark ? "&#9788;" : "&#9789;";
+}
+function toggleTheme(){
+  const dark = localStorage.getItem(LS.theme) === "dark";
+  localStorage.setItem(LS.theme, dark ? "light" : "dark");
+  applyTheme();
+}
+
 Office.onReady(() => {
   loadSettings();
+  applyTheme();
+  $("theme").addEventListener("click", toggleTheme);
   if(!localStorage.getItem(LS.key)) $("settings").open = true;
   $("go").addEventListener("click", run);
   $("save").addEventListener("click", saveSettings);
@@ -327,6 +410,7 @@ Office.onReady(() => {
   $("importP").addEventListener("click", () => $("importFile").click());
   $("importFile").addEventListener("change",
     ev => ev.target.files[0] && importProfile(ev.target.files[0]));
+  $("clearSamples").addEventListener("click", clearSamples);
 });
 </script>
 </body>
